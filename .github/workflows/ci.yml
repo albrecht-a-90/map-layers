@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn format:check
+      - run: yarn lint
+      - run: yarn typecheck
+      - run: yarn test
+      - id: pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+      # Pages serves the site under /<repo>/; Docker and `yarn dev` serve it at /
+      - run: yarn build --base=${{ steps.pages.outputs.base_path || '' }}/
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t map-layers .
+      - name: Smoke test
+        run: |
+          docker run -d --name web -p 8080:80 map-layers
+          for i in $(seq 1 20); do curl -sf http://localhost:8080/ > /dev/null && break; sleep 1; done
+          curl -sf http://localhost:8080/ | grep -q '<div id="root">'
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [check, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

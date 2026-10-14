@@ -1,0 +1,8 @@
+name: map-layers
+
+services:
+  web:
+    build: .
+    image: map-layers
+    ports:
+      - '8080:80'
